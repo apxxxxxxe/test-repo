@@ -9,44 +9,43 @@ import re
 from sklearn.cluster import KMeans
 import cv2
 
-VARIATION = 3
-NUM = int(sys.argv[2])
-IMG_PATH = sys.argv[1]
-
-
 def main():
-    img = Image.open(IMG_PATH).convert("RGB")
+    VARIATION = 4
+    NUM = int(sys.argv[2])
+
+    imgpath = sys.argv[1]
+
+    img = Image.open(imgpath).convert("RGB")
 
     color_arr = np.array(img)
     w_size, h_size, n_color = color_arr.shape
-    color_arr_one = color_arr.reshape(w_size * h_size, n_color)
-    print('img:')
-    print(color_arr_one)
-    # hls_arr_one = [colorsys.rgb_to_hls(*color_arr_one[i]) for i in range(color_arr_one.shape[0])]
+    color_arr = color_arr.reshape(w_size * h_size, n_color)
 
-    colors = np.array(kmeans_image(img, NUM))
-    print()
-    print('4pallet:')
-    print(colors)
-    print()
+    colors = kmeans_hls_image(img, NUM)
 
-    pallet_16s = [gain_lightness(tuple(colors[j])) for j in range(NUM)]
-    pallet_16s_arr = np.array(pallet_16s)
-    pallet_16s_arr = pallet_16s_arr.reshape(NUM*VARIATION, 3)
+    palletsize = round(img.width / (NUM*VARIATION))
+    pallet_img = Image.new('RGB', (img.width, palletsize))
+    draw = ImageDraw.Draw(pallet_img)
 
-    print()
-    print('16pallet:')
-    print(pallet_16s_arr)
+    gain_colors = [gain_lightness(tuple(colors[j])) for j in range(NUM)]
+    #gain_colors = np.abs(gain_colors)
+    gain_colors_arr = np.array(gain_colors)
+    gain_colors_arr = gain_colors_arr.reshape(NUM*VARIATION, 3)
 
-    ran = color_arr_one.shape[0]
+    lim = NUM*VARIATION
+    for i in range(lim):
+        draw.rectangle(((i%lim)*palletsize, (i//lim)*palletsize, (i%lim+1)*palletsize, (i//lim+1)*palletsize), fill=tuple(gain_colors_arr[i]))
+
+    print(gain_colors_arr)
+
+    ran = color_arr.shape[0]
     print(ran)
     for index in range(ran):
         print("\rprogress:{}%".format(index*100//ran+1), end="")
-        color_arr_one[index] = getNearestValue(pallet_16s_arr, color_arr_one[index])
+        color_arr[index] = getNearestValue(gain_colors_arr, color_arr[index])
 
-    result_arr = color_arr_one.reshape(w_size, h_size, n_color)
-    reduced_img = Image.fromarray(result_arr, 'RGB')
-    pallet_img = make_pallet_img(pallet_16s_arr, img)
+    result_arr = color_arr.reshape(w_size, h_size, n_color)
+    reduced_img = Image.fromarray(result_arr)
     dest_img = get_concat_v(reduced_img, pallet_img)
     dest_img.save('result.png')
 
@@ -57,18 +56,6 @@ def main():
     # label = QLabel("Hello World")
     # label.show()
     # sys.exit(app.exec_())
-
-
-def make_pallet_img(colors, img):
-    palletsize = round(img.width / (NUM*VARIATION))
-    pallet_img = Image.new('RGB', (img.width, palletsize))
-    draw = ImageDraw.Draw(pallet_img)
-
-    lim = NUM*VARIATION
-    for i in range(lim):
-        draw.rectangle(((i%lim)*palletsize, (i//lim)*palletsize, (i%lim+1)*palletsize, (i//lim+1)*palletsize), fill=tuple(colors[i]))
-
-    return pallet_img
 
 
 def kmeans_image(img, n_cluster):
@@ -93,6 +80,42 @@ def kmeans_image(img, n_cluster):
 
     return [codebook[elem].astype(int) for elem in desc_order]
 
+def kmeans_hls_image(img, n_cluster):
+    SUMPLE_SIZE = 100
+
+    if img.width > SUMPLE_SIZE or img.height > SUMPLE_SIZE:
+        img = img.resize((SUMPLE_SIZE, SUMPLE_SIZE), Image.NEAREST)
+
+    color_arr = np.array(img)
+    w_size, h_size, n_color = color_arr.shape
+    color_arr = color_arr.reshape(w_size * h_size, n_color)
+    print(color_arr)
+    color_arr = color_arr.astype(float)
+
+    hls_arr_one = [colorsys.rgb_to_hls(*color_arr[i]/255) for i in range(len(color_arr))]
+    #color_arr = [colorsys.hls_to_rgb(*hls_arr_one[i]) for i in range(len(hls_arr_one))]
+    #hls_arr_one = color_arr
+    print(np.array(hls_arr_one))
+    #hls_arr_one = np.delete(hls_arr_one, 1, 1)  # Lwosakujo
+    #hls_arr_one *= np.array([1, 0, 1])
+    #hls_arr_one += np.array([0, 0.5, 0])
+    #hls_arr_one = hls_arr_one.astype(float)
+
+    codebook, distortion = scipy.cluster.vq.kmeans(hls_arr_one, n_cluster)  # クラスタ中心
+    code, _ = scipy.cluster.vq.vq(hls_arr_one, codebook)  # 各データがどのクラスタに属しているか
+
+    n_data = []  # 各クラスタのデータ数
+    for n in range(n_cluster):
+        n_data.append(len([x for x in code if x == n]))
+
+    desc_order = np.argsort(n_data)[::-1]  # データ数が多い順
+
+    print(np.array([codebook[elem] for elem in desc_order]))
+
+    ret = np.array([colorsys.hls_to_rgb(*codebook[elem]) for elem in desc_order])*255
+    return ret.tolist()
+    #return [colorsys.hls_to_rgb(*codebook[elem].astype(int)) for elem in desc_order]
+    #return [codebook[elem].astype(int) for elem in desc_order]
 
 def getNearestValue(list, num):
     """
@@ -105,34 +128,11 @@ def getNearestValue(list, num):
     # リスト要素と対象値の差分を計算し最小値のインデックスを取得
     res = np.abs(list - num)
     # print(res)
-    #res = res * np.array([10, 1, 1])
+    res = res * np.array([10, 1, 1])
     res = np.sum(res, axis=1)
     # print(res)
     idx = res.argmin()
     return list[idx]
-
-
-def kmeans_hls_image(img, n_cluster):
-    SUMPLE_SIZE = 500
-
-    if img.width > SUMPLE_SIZE or img.height > SUMPLE_SIZE:
-        img = img.resize((SUMPLE_SIZE, SUMPLE_SIZE), Image.NEAREST)
-
-    color_arr = np.array(img)
-    w_size, h_size, n_color = color_arr.shape
-    color_arr = color_arr.reshape(w_size * h_size, n_color)
-    color_arr = color_arr.astype(float)
-
-    codebook, distortion = scipy.cluster.vq.kmeans(color_arr, n_cluster)  # クラスタ中心
-    code, _ = scipy.cluster.vq.vq(color_arr, codebook)  # 各データがどのクラスタに属しているか
-
-    n_data = []  # 各クラスタのデータ数
-    for n in range(n_cluster):
-        n_data.append(len([x for x in code if x == n]))
-
-    desc_order = np.argsort(n_data)[::-1]  # データ数が多い順
-
-    return [colorsys.hls_to_rgb(*codebook[elem].astype(int)) for elem in desc_order]
 
 
 def hex_to_rgb(hex):
@@ -145,11 +145,12 @@ def hex_to_rgb(hex):
 
 
 def gain_lightness(rgb):
-    #gain_nums = [0.5, 0.75, 1.0, 1.25]
-    gain_nums = [0.75, 1.0, 1.25]
-    #gain_nums = [0.50, 1.0]
+    gain_nums = [0.5, 0.75, 1.0, 1.25]
+    #gain_nums = [50, 75, 100, 125]
+    # gain_nums = [0.75, 1.0]
     hls_list = list(colorsys.rgb_to_hls(*rgb))
     return list(list(map(lambda x: round(x*1), list(colorsys.hls_to_rgb(hls_list[0], hls_list[1]*gain, hls_list[2])))) for gain in gain_nums)
+    #return list(list(map(lambda x: round(x*1), list(colorsys.hls_to_rgb(hls_list[0], hls_list[1]+gain, hls_list[2])))) for gain in gain_nums)
 
 
 def get_concat_v(im1, im2):
