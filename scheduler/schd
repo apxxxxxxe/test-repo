@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+
+# --------------------------------------------------
+# 定数の定義
+# --------------------------------------------------
+readonly PLANSPATH="$(dirname $0)/plans"
+
+function make_plans() {
+  # grepのクエリにする今日の日付を作る
+  if [ $# -gt 0 ]; then
+    _day=$1
+  else
+    _day=0
+  fi
+
+  _date=$(date '+%Y %m %d' --date="$_day day")
+  # 曜日を判断して予定をコピーする
+  find "$PLANSPATH" -type f | grep -i $(LANG=c date '+%a' --date="$_day day").md | xargs cat | sed -e "s:^:$_date :" > "$PLANSPATH/today.md"
+  # once.mdからコピーする
+  grep "$_date" "$PLANSPATH/once.md" >> "$PLANSPATH/today.md"
+  # everyday.mdからコピーする
+  cat "$PLANSPATH/everyday.md" | sed -e "s:^:$_date :" >> "$PLANSPATH/today.md"
+  # ソート
+  sort_plans "$PLANSPATH/today.md"
+  return 0
+}
+
+# --------------------------------------------------
+# 関数の定義
+# --------------------------------------------------
+function make_done() {
+  # 対象ファイル内の現在より前の予定をdone.mdへ送る
+  _today=$(date '+%Y %m %d')
+  sort_plans "$1"
+  _tail=$(($(get_hour_head "$_today" "$1")-1))
+  [ $_tail -le 0 ] && exit 0
+  cat "$1" | head -n $_tail >> $PLANSPATH/done.md
+  sort_plans $PLANSPATH/done.md
+  sed -i "1,${_tail}d" "$1"
+  return 0
+}
+
+function make_timeline() {
+  _head=0
+  _lasthead=0
+  _tmpfile=$(mktemp)
+  while read line; do
+    head=$(echo $line | cut -d' ' -f 4)
+    if [ $_head -eq 0 ]; then
+      show_clock 0 0 >> $_tmpfile
+    else
+      show_clock $((_lasthead + 1)) $_head >> $_tmpfile
+    fi
+    echo $line | awk '{print $4":"$5" "$6" "$7" "$8}' >> $_tmpfile
+    _lasthead=$_head
+  done < "$1"
+
+  _res=$(mktemp)
+  paste <(cat $_tmpfile) > $_res
+  echo $_res
+  return 0
+}
+
+function get_hour_head() {
+  grep -n "$1" "$2" | cut -d':' -f 1 | head -n 1
+  return 0
+}
+
+function get_hour_tail() {
+  grep -n "$1" "$2" | cut -d':' -f 1 | tail -n 1
+  return 0
+}
+
+function show_plans() {
+  if [ $# -ge 1 ]; then
+    _start=$1
+  else
+    _start=$(date '+%H')
+  fi
+  _now=$(date '+%H')
+  for _i in $(seq $_start 23); do
+    printf "%02d──────────────────────────────\n" $_i
+
+    [ $_i -eq $_now ] && echo "-------------$(date '+%H:%M')--------------"
+
+    if [ $_i -lt 10 ]; then
+      grep -E "^[0-9]{4} [0-9]{2} [0-9]{2} 0$_i" $2 | cut -d' ' -f 5,8 | sed 's:^:  │:'
+    else
+      grep -E "^[0-9]{4} [0-9]{2} [0-9]{2} $_i" $2 | cut -d' ' -f 5,8 | sed 's:^:  │:'
+    fi
+  done
+  return 0
+}
+
+function show_bar() {
+  yes "$3" | head -n $(($1 * $2)) | xargs -n $2 | tr -d ' '
+  return 0
+}
+
+function show_clock() {
+  seq $1 $2 | xargs -I{} printf "%02d\n" {}
+  return 0
+}
+
+function sort_plans() {
+  sort -n -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 "$1" -o "$1"
+  return 0
+}
+
+function init_plans() {
+  declare -a plans
+  plans+=("$PLANSPATH/mon.md")
+  plans+=("$PLANSPATH/tue.md")
+  plans+=("$PLANSPATH/wed.md")
+  plans+=("$PLANSPATH/thu.md")
+  plans+=("$PLANSPATH/fry.md")
+  plans+=("$PLANSPATH/sat.md")
+  plans+=("$PLANSPATH/sun.md")
+  plans+=("$PLANSPATH/everyday.md")
+  plans+=("$PLANSPATH/once.md")
+  plans+=("$PLANSPATH/done.md")
+  for _file in ${plans[@]}; do
+    [ ! -f $_file ] && touch $_file
+  done
+  return 0
+}
+
+function recreate_plans() {
+  declare -a plans
+  plans+=("$PLANSPATH/mon.md")
+  plans+=("$PLANSPATH/tue.md")
+  plans+=("$PLANSPATH/wed.md")
+  plans+=("$PLANSPATH/thu.md")
+  plans+=("$PLANSPATH/fry.md")
+  plans+=("$PLANSPATH/sat.md")
+  plans+=("$PLANSPATH/sun.md")
+  plans+=("$PLANSPATH/everyday.md")
+  plans+=("$PLANSPATH/once.md")
+  plans+=("$PLANSPATH/done.md")
+  for _file in ${plans[@]}; do
+    [ -f $_file ] && rm -f $_file && echo "rm $_file"
+    touch $_file
+  done
+  return 0
+}
+
+function draw_blank_spaces() {
+  yes '-' | head -n $1 | tr -d '\n'
+}
+
+function draw_blank_lines() {
+  yes ' ' | head -n $1
+  return 0
+}
+
+function show_pocks() {
+  cols=$(tput cols)
+  per_hour=$((cols / 24))
+
+  for _i in $(seq $_start 23); do
+    printf "%02d──────────────────────────────\n" $_i
+    draw_blank_lines $((per_hour - 1))
+  done
+
+  printf "\e[${cols}A\e[;1H"
+
+  draw_square 10 10 
+
+
+
+  return 0
+}
+
+function draw_square() {
+  _inner_width=$(($1 - 2))
+  _height=$2
+  _x=$3
+
+  printf "\e[;${_x}H┌$(yes '─' | head -n $_inner_width | tr -d '\n')┐\n"
+  sleep 1
+  #_blank="│$(yes '-' | head -n $_inner_width | tr -d '\n')│"
+  _blank="│$(draw_blank_spaces $_inner_width)│"
+  yes $_blank | head -n $((_height - 2)) | sed "s:^:\x1b[;${_x}H:"
+  sleep 1
+  printf "\e[;${_x}H└$(yes '─' | head -n $_inner_width | tr -d '\n')┘\n"
+  return 0
+}
+
+function move_cursor() {
+  case $1 in
+    h) printf "\e[${2}D" ;;
+    j) printf "\e[${2}B" ;;
+    k) printf "\e[${2}A" ;;
+    l) printf "\e[${2}C" ;;
+  esac
+  return 0
+}
+
+function get_pos(){
+  IFS=';' read -sdR -p $'\E[6n' _row _col
+  if [ "$1" == "row" ]; then
+    echo "${_row#*[}"
+  elif [ "$1" == "col" ]; then
+    echo "${_col#*[}"
+  fi
+  return 0
+}
+
+# --------------------------------------------------
+# コマンド引数処理
+# --------------------------------------------------
+while (($# > 0))
+do
+  case $1 in
+    -*)
+      if [[ "$1" =~ 'x' ]]; then
+        set -eux
+      fi
+      if [[ "$1" =~ 'e' ]]; then
+        [ -n "$2" ] && file=$(find $PLANSPATH -type f | grep $2 | head -n 1) || file=""
+        [ -f "$file" ] && $EDITOR "$file" || $EDITOR "$PLANSPATH/once.md"
+        exit 0
+      fi
+      if [[ "$1" =~ 'd' ]]; then
+        make_done $PLANSPATH/once.md
+        exit 0
+      fi
+      shift
+      ;;
+    *)
+      ((++argc))
+      argv=("${argv[@]}" "$1")
+      shift
+      ;;
+  esac
+done
+
+
+# --------------------------------------------------
+# メイン処理
+# --------------------------------------------------
+init_plans
+make_plans ${argv[0]}
+
+show_plans 0 $PLANSPATH/today.md
